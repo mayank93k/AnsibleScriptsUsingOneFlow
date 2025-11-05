@@ -1,0 +1,33 @@
+---
+- name: Create HDFS directories inside Docker
+  hosts: localhost
+  gather_facts: no
+  collections:
+    - community.docker
+  vars:
+    hdfs_dirs:
+      - /user/testuser/data
+      - /user/testuser/logs
+      - /tmp/ansible_test
+    namenode_container: namenode
+
+  tasks:
+    - name: Ensure HDFS directories exist
+      community.docker.docker_container:
+        name: "{{ namenode_container }}"
+        command: "hdfs dfs -mkdir -p {{ item }}"
+        tty: yes
+        detach: no
+      loop: "{{ hdfs_dirs }}"
+
+    - name: Set ownership for HDFS directories
+      community.docker.docker_exec:
+        container: "{{ namenode_container }}"
+        command: hdfs dfs -chown testuser:hdfs {{ item }}
+      loop: "{{ hdfs_dirs }}"
+
+    - name: Set permissions for HDFS directories
+      community.docker.docker_exec:
+        container: "{{ namenode_container }}"
+        command: hdfs dfs -chmod 755 {{ item }}
+      loop: "{{ hdfs_dirs }}"

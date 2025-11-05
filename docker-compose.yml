@@ -1,0 +1,192 @@
+services:
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
+    platform: linux/amd64
+    container_name: namenode
+    hostname: namenode
+    environment:
+      - CLUSTER_NAME=test
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+    volumes:
+      - namenode-data:/hadoop/dfs/name
+    ports:
+      - "50070:50070"
+      - "8020:8020"
+    env_file:
+      - ./env/hadoop.env
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:50070" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - hive-network
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop2.7.4-java8
+    platform: linux/amd64
+    container_name: datanode
+    hostname: datanode
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+      - SERVICE_PRECONDITION=namenode:50070
+    volumes:
+      - datanode-data:/hadoop/dfs/data
+    depends_on:
+      namenode:
+        condition: service_healthy
+    ports:
+      - "50075:50075"
+    env_file:
+      - ./env/hadoop.env
+    networks:
+      - hive-network
+
+  metastore-db:
+    image: postgres:11
+    platform: linux/amd64
+    container_name: metastore-db
+    hostname: metastore-db
+    environment:
+      - POSTGRES_DB=metastore
+      - POSTGRES_USER=hive
+      - POSTGRES_PASSWORD=hive
+    volumes:
+      - metastore_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U hive -d metastore" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hive-network
+
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    platform: linux/amd64
+    container_name: hive-metastore
+    hostname: hive-metastore
+    depends_on:
+      metastore-db:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+    environment:
+      - CORE_CONF_fs_defaultFS= "hdfs://namenode:8020"
+      - HDFS_CONF_dfs_namenode_datanode_registration_ip___hostname___check="false"
+    entrypoint: [ "/bin/bash", "-c" ]
+    command: 
+    - |
+      set -ex
+      echo "=== Waiting for database ==="
+      sleep 15
+
+      echo "=== Creating hive-site.xml ==="
+      cat > /opt/hive/conf/hive-site.xml << 'EOFXML'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <configuration>
+        <property>
+          <name>javax.jdo.option.ConnectionURL</name>
+          <value>jdbc:postgresql://metastore-db:5432/metastore</value>
+        </property>
+        <property>
+          <name>javax.jdo.option.ConnectionDriverName</name>
+          <value>org.postgresql.Driver</value>
+        </property>
+        <property>
+          <name>javax.jdo.option.ConnectionUserName</name>
+          <value>hive</value>
+        </property>
+        <property>
+          <name>javax.jdo.option.ConnectionPassword</name>
+          <value>hive</value>
+        </property>
+        <property>
+          <name>hive.metastore.warehouse.dir</name>
+          <value>hdfs://namenode:8020/user/hive/warehouse</value>
+        </property>
+        <property>
+          <name>hive.metastore.uris</name>
+          <value>thrift://0.0.0.0:9083</value>
+        </property>
+        <property>
+          <name>hive.metastore.schema.verification</name>
+          <value>false</value>
+        </property>
+      </configuration>
+      EOFXML
+
+      echo "=== Initializing Hive Metastore Schema ==="
+      /opt/hive/bin/schematool -dbType postgres -initSchema || echo "Schema init failed or already exists"
+
+      echo "=== Starting Hive Metastore service ==="
+      exec /opt/hive/bin/hive --service metastore
+    ports:
+      - "9083:9083"
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "localhost", "9083" ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    networks:
+      - hive-network
+
+  hiveserver2:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    platform: linux/amd64
+    container_name: hiveserver2
+    hostname: hiveserver2
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+    entrypoint: [ "/bin/bash", "-c" ]
+    command: 
+     - |
+      set -ex
+      echo "=== Waiting for metastore ==="
+      sleep 10
+
+      echo "=== Creating hive-site.xml ==="
+      cat > /opt/hive/conf/hive-site.xml << 'EOFXML'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <configuration>
+        <property>
+          <name>hive.metastore.uris</name>
+          <value>thrift://hive-metastore:9083</value>
+        </property>
+        <property>
+          <name>hive.metastore.warehouse.dir</name>
+          <value>hdfs://namenode:8020/user/hive/warehouse</value>
+        </property>
+      </configuration>
+      EOFXML
+
+      echo "=== Starting hiveserver2 ==="
+      exec /opt/hive/bin/hiveserver2
+    ports:
+      - "10000:10000"
+      - "10002:10002"
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "localhost", "10000" ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    networks:
+      - hive-network
+
+volumes:
+  namenode-data:
+  datanode-data:
+  metastore_db_data:
+
+
+networks:
+  hive-network:
+    driver: bridge

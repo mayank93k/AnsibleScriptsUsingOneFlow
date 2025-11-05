@@ -1,0 +1,4 @@
+hdfs_paths:
+  - /user/testuser/data
+  - /user/testuser/logs
+  - /tmp/ansible_test

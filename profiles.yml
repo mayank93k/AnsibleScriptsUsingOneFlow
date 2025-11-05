@@ -1,0 +1,14 @@
+sandbox_test:
+  target: dev
+  outputs:
+    dev:
+      type: spark
+      method: thrift
+      host: localhost
+      port: 10000
+      user: hive
+      schema: default
+      connect_retries: 5
+      connect_timeout: 120
+      retry_all: true
+      auth: NOSASL

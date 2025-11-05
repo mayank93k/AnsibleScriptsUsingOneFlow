@@ -1,0 +1,24 @@
+---
+- name: Setup Hive schema inside Docker
+  hosts: localhost
+  gather_facts: no
+  collections:
+    - community.docker
+
+  vars:
+    hiveserver_container: hiveserver2
+    hive_sql_file: /tmp/hive_setup.sql   # Path inside container
+    local_hive_sql: ./hive_setup.sql     # Path on your host machine
+
+  tasks:
+    - name: Copy Hive SQL file into HiveServer2 container
+      community.docker.docker_cp:
+        src: "{{ local_hive_sql }}"
+        dest: "{{ hive_sql_file }}"
+        container: "{{ hiveserver_container }}"
+
+    - name: Execute Hive SQL file
+      community.docker.docker_exec:
+        container: "{{ hiveserver_container }}"
+        command: >
+          /opt/hive/bin/beeline -u "jdbc:hive2://localhost:10000/default" -n hive -f "{{ hive_sql_file }}"

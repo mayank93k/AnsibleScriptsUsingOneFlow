@@ -1,0 +1,2 @@
+- import_playbook: hdfs.yml
+- import_playbook: hive.yml
